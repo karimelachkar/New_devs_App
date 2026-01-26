@@ -43,7 +43,7 @@ class BootstrapResponse(BaseModel):
     """Complete bootstrap data for instant app initialization"""
     user: Dict[str, Any]
     tenant: Dict[str, Any]
-    company_settings: Dict[str, Any]
+    company_settings: Optional[Dict[str, Any]]
     permissions: List[Dict[str, str]]
     modules: List[str]
     smart_views: Dict[str, List[str]]

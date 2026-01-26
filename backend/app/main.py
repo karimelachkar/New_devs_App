@@ -28,6 +28,8 @@ from .api.v1 import (
     bootstrap,
     health,
     persistent_auth,
+    dashboard,
+    login,
 )
 
 from .monitoring.middleware import PerformanceMonitoringMiddleware
@@ -172,12 +174,16 @@ app.add_middleware(PerformanceMonitoringMiddleware)
 
 # Include API routers - Auth & User Management Only
 # Authentication
+app.include_router(login.router, prefix="/api/v1", tags=["auth"])
 app.include_router(auth_info.router, prefix="/api/v1", tags=["auth"])
 app.include_router(persistent_auth.router, prefix="/api/v1/auth", tags=["persistent-auth"])
 
 # User Management
 app.include_router(users_lightning.router, prefix="/api/v1", tags=["users"])
 app.include_router(profile.router, prefix="/api/v1", tags=["profile"])
+
+# Dashboard
+app.include_router(dashboard.router, prefix="/api/v1", tags=["dashboard"])
 
 # Bootstrap & Settings (for AppContext)
 app.include_router(company_settings.router, prefix="/api/v1", tags=["company-settings"])

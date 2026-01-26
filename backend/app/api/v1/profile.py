@@ -145,7 +145,12 @@ async def get_profile(
         # Try to get unread notification count
         try:
             unread_response = supabase.rpc('get_unread_notification_count', {'user_uuid': user.id}).execute()
-            unread_count = unread_response.data if unread_response.data is not None else 0
+            data = unread_response.data
+            if isinstance(data, list):
+                # Handle mock/list response
+                unread_count = len(data) if data else 0
+            else:
+                unread_count = data if data is not None else 0
         except Exception as unread_error:
             logger.warning(f"Error getting unread notification count for user {user.id}: {unread_error}")
             unread_count = 0

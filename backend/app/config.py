@@ -1,4 +1,4 @@
-from pydantic_settings import BaseSettings
+from pydantic_settings import BaseSettings, SettingsConfigDict
 from typing import Dict, Optional, Union, List
 import json
 import os
@@ -8,12 +8,22 @@ logger = logging.getLogger(__name__)
 
 
 class Settings(BaseSettings):
-    # Supabase Configuration
-    supabase_url: str
-    supabase_service_role_key: str
-    supabase_anon_key: str
-    supabase_jwt_secret: Optional[str] = None
-    supabase_tenant_jwt_secret: Optional[str] = None
+    # Core settings (Required for Challenge)
+    database_url: str = "postgresql://postgres:postgres@db:5432/propertyflow"
+    redis_url: str = "redis://redis:6379/0"
+    secret_key: str = "debug_challenge_secret"
+    
+    # Legacy / Unused in Challenge (Made Optional)
+    supabase_url: Optional[str] = None
+    supabase_service_role_key: Optional[str] = None
+    supabase_anon_key: Optional[str] = None
+    token_encryption_key: str = "dummy_key_for_challenge_mode_only_123"
+    environment: str = "development"
+    n8n_verification_webhook_url: Optional[str] = None
+    openai_api_key: Optional[str] = None
+    
+    # ... allow extra fields just in case
+    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
     
     def __init__(self, **kwargs):
         """Initialize settings with debug logging"""
@@ -59,31 +69,17 @@ class Settings(BaseSettings):
         logger.info("=" * 50)
         logger.info("🏁 SETTINGS INITIALIZATION COMPLETE")
 
-    # Hostaway API Tokens (JSON string) - DEPRECATED, using Token Management now
+    # Hostaway API Tokens (JSON string) - DEPRECATED for Challenge
     hostaway_tokens: Optional[str] = None
-
-    # Application Settings
-    app_name: str = "Flex PMS Backend"
-    debug: bool = False
-    frontend_url: str = "http://localhost:5173"  # Frontend URL for emails and links
-    backend_url: str = "http://localhost:8000"  # Backend URL for internal API calls
-    cors_origins: List[str] = [
-        "http://localhost:3000",
-        "http://localhost:3001",
-        "http://localhost:5173",
-        "http://localhost:5174",
-        "https://new-pms.netlify.app",
-        "https://pms.theflex.global",
-        "https://new-pms.theflex.global/",
-    ]
-
-    # Security
-    secret_key: str
-    algorithm: str = "HS256"
-    access_token_expire_minutes: int = 10080  # 7 days in minutes (7 * 24 * 60)
     
-    # Token Encryption
-    token_encryption_key: str
+    # Application Settings
+    app_name: str = "PropertyFlow Debug Challenge"
+    debug: bool = True
+    
+    # Optional fields for compatibility with existing imports
+    frontend_url: str = "http://localhost:3000"
+    backend_url: str = "http://localhost:8000"
+    cors_origins: List[str] = ["*"]
 
     # SendGrid Configuration (add these lines)
     sendgrid_api_key: Optional[str] = None
@@ -103,15 +99,8 @@ class Settings(BaseSettings):
         """Get the cron secret for easy access"""
         return self.cron_secret or "dev-secret"
 
-    # Environment indicator
-    environment: str
-
     # n8n Integration
-    n8n_verification_webhook_url: str
     n8n_webhook_secret: Optional[str] = None
-
-    # OpenAI Configuration
-    openai_api_key: str
 
     # Stripe Configuration
     stripe_secret_key: Optional[str] = None
@@ -143,9 +132,6 @@ class Settings(BaseSettings):
     redis_port: int = 6379
     redis_db: int = 0
     redis_password: Optional[str] = None
-    redis_url: Optional[str] = None  # Alternative: full Redis URL
-
-    model_config = {"env_file": ".env", "case_sensitive": False, "extra": "allow"}
 
     def get_hostaway_tokens(self) -> Dict[str, str]:
         """Parse Hostaway tokens from JSON string or fallback to space-separated format"""

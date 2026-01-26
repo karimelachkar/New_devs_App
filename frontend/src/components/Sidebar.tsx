@@ -11,19 +11,51 @@ import { useLocation, useNavigate } from "react-router-dom";
 import { useAuth } from "../contexts/AuthContext.new";
 import { useSidebar } from "../App";
 
-interface NavigationItem {
-  name: string;
-  icon: React.ComponentType<React.SVGProps<SVGSVGElement>>;
-  href: string;
-}
+// Helper to check if user has permission for a section
+const hasPermission = (user: any, section: string) => {
+  if (!user || !user.permissions) return false;
+  // Admins have access to everything
+  if (user.isAdmin || user.app_metadata?.role === 'admin') return true;
 
-const navigation: NavigationItem[] = [
-  {
-    name: "Dashboard",
-    href: "/dashboard",
-    icon: LayoutDashboard,
-  },
-];
+  // Check specific permission
+  return user.permissions.some((p: any) =>
+    (p.section === section || p.section === '*') &&
+    (p.action === 'read' || p.action === '*' || p.action === 'create' || p.action === 'update' || p.action === 'delete')
+  );
+};
+
+// Start with dashboard which is always visible
+const getFilteredNavigation = (user: any) => {
+  const items = [
+    {
+      name: "Dashboard",
+      href: "/dashboard",
+      icon: LayoutDashboard,
+      section: 'dashboard',
+      alwaysShow: true
+    },
+    {
+      name: "Properties",
+      href: "/properties",
+      icon: LayoutDashboard, // Todo: Replace with Building icon if available
+      section: 'properties'
+    },
+    {
+      name: "Reservations",
+      href: "/reservations",
+      icon: LayoutDashboard, // Todo: Replace with Calendar icon if available
+      section: 'reservations'
+    },
+    {
+      name: "Cleaning",
+      href: "/cleaning",
+      icon: LayoutDashboard, // Todo: Replace with Clipboard icon if available
+      section: 'cleaning'
+    }
+  ];
+
+  return items.filter(item => item.alwaysShow || hasPermission(user, item.section));
+};
 
 const Sidebar: React.FC = () => {
   const location = useLocation();
@@ -31,14 +63,14 @@ const Sidebar: React.FC = () => {
   const { signOut, user } = useAuth();
   const { isCollapsed, setIsCollapsed, isMobileOpen, setIsMobileOpen } = useSidebar();
 
+  const filteredNavigation = React.useMemo(() => getFilteredNavigation(user), [user]);
+
   const handleLogout = async () => {
     try {
       console.log('[Sidebar] Logout clicked');
       await signOut();
-      // signOut() handles the redirect to /login
     } catch (error) {
       console.error('[Sidebar] Logout error:', error);
-      // signOut() handles redirect even on error
     }
   };
 
@@ -67,21 +99,21 @@ const Sidebar: React.FC = () => {
       {/* Sidebar */}
       <div
         className={`
-          fixed inset-y-0 left-0 z-50 flex flex-col bg-white border-r border-gray-200
-          transition-all duration-300 ease-in-out
-          ${isCollapsed ? "w-16" : "w-64"}
-          ${isMobileOpen ? "translate-x-0" : "-translate-x-full"}
-          lg:translate-x-0
-        `}
+            fixed inset-y-0 left-0 z-50 flex flex-col bg-white border-r border-gray-200
+            transition-all duration-300 ease-in-out
+            ${isCollapsed ? "w-16" : "w-64"}
+            ${isMobileOpen ? "translate-x-0" : "-translate-x-full"}
+            lg:translate-x-0 lg:static lg:h-full
+          `}
       >
         {/* Header */}
         <div className="flex items-center justify-between h-16 px-4 border-b border-gray-200">
           {!isCollapsed && (
             <div className="flex items-center space-x-2">
-              <div className="w-8 h-8 bg-blue-600 rounded-lg flex items-center justify-center">
-                <span className="text-white font-bold text-sm">DS</span>
+              <div className="w-8 h-8 bg-gradient-to-br from-blue-600 to-indigo-700 rounded-lg flex items-center justify-center shadow-sm">
+                <span className="text-white font-bold text-sm">PF</span>
               </div>
-              <span className="font-semibold text-gray-900">Dev Skeleton</span>
+              <span className="font-bold text-gray-900 tracking-tight">PropertyFlow</span>
             </div>
           )}
 
@@ -107,7 +139,7 @@ const Sidebar: React.FC = () => {
 
         {/* Navigation */}
         <nav className="flex-1 overflow-y-auto p-4 space-y-1">
-          {navigation.map((item) => {
+          {filteredNavigation.map((item) => {
             const Icon = item.icon;
             const active = isActive(item.href);
 
@@ -152,7 +184,7 @@ const Sidebar: React.FC = () => {
             {!isCollapsed && user && (
               <div className="flex-1 text-left min-w-0">
                 <p className="text-sm font-medium text-gray-900 truncate">
-                  {user.full_name || user.email}
+                  {user.user_metadata?.full_name || user.user_metadata?.name || user.email}
                 </p>
                 <p className="text-xs text-gray-500 truncate">{user.email}</p>
               </div>

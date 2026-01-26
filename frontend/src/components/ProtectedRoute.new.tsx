@@ -9,6 +9,8 @@ interface ProtectedRouteProps {
 export const ProtectedRoute: React.FC<ProtectedRouteProps> = ({ children }) => {
   const { isAuthenticated, isLoading } = useAuth();
 
+  console.log(`🛡️ [ProtectedRoute] Rendering. Loading: ${isLoading}, Authenticated: ${isAuthenticated}`);
+
   if (isLoading) {
     return (
       <div className="flex items-center justify-center min-h-screen">
@@ -18,6 +20,7 @@ export const ProtectedRoute: React.FC<ProtectedRouteProps> = ({ children }) => {
   }
 
   if (!isAuthenticated) {
+    console.warn('🛡️ [ProtectedRoute] Not authenticated -> Redirecting to /login');
     return <Navigate to="/login" replace />;
   }
 

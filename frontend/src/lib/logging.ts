@@ -5,12 +5,12 @@ import { ActivityLog, LogFilters } from '../types/logging';
 export async function createLog(log: Partial<ActivityLog>): Promise<ActivityLog | null> {
   try {
     const { data: { user }, error: authError } = await supabase.auth.getUser();
-    
+
     if (authError) {
       console.error('Authentication error:', authError);
       return null;
     }
-    
+
     if (!user) {
       console.error('No authenticated user found');
       return null;
@@ -32,7 +32,7 @@ export async function createLog(log: Partial<ActivityLog>): Promise<ActivityLog 
         const prop = await SecureAPI.getPropertyById(entityId);
         propertyName = prop?.property?.internal_listing_name || prop?.internal_listing_name;
         cityName = prop?.property?.city || prop?.city;
-      } catch {}
+      } catch { }
     }
 
     // Get user's city access via /auth/me
@@ -40,7 +40,7 @@ export async function createLog(log: Partial<ActivityLog>): Promise<ActivityLog 
     try {
       const me = await SecureAPI.getAuthMe();
       userCities = me?.cities || [];
-    } catch {}
+    } catch { }
 
     // Prepare log data
     const logData = {
@@ -99,7 +99,7 @@ export async function fetchLogs(filters: LogFilters = {}, page = 1, pageSize = 1
         if (log.created_by_name) {
           return log.created_by_name;
         }
-        
+
         // Fallback to user resolution (legacy approach)
         const u = userMap.get(log.user_id);
         if (!u) return 'System';
@@ -113,7 +113,7 @@ export async function fetchLogs(filters: LogFilters = {}, page = 1, pageSize = 1
         .filter(log => log.entity_type === 'property' && log.entity_id)
         .map(log => log.entity_id)
     )];
-    
+
     if (propertyIds.length > 0) {
       const props = await Promise.all(propertyIds.map(async (pid) => {
         try { const p = await SecureAPI.getPropertyById(pid); return { id: pid, name: p?.property?.internal_listing_name || p?.internal_listing_name }; } catch { return { id: pid, name: undefined }; }
@@ -158,7 +158,7 @@ export async function exportLogs(filters: LogFilters = {}) {
         if (log.created_by_name) {
           return log.created_by_name;
         }
-        
+
         // Fallback to user resolution (legacy approach)
         const u = userMap.get(log.user_id);
         if (!u) return 'System';
@@ -172,7 +172,7 @@ export async function exportLogs(filters: LogFilters = {}) {
         .filter(log => log.entity_type === 'property' && log.entity_id)
         .map(log => log.entity_id)
     )];
-    
+
     if (propertyIds.length > 0) {
       const props = await Promise.all(propertyIds.map(async (pid) => {
         try { const p = await SecureAPI.getPropertyById(pid); return { id: pid, name: p?.property?.internal_listing_name || p?.internal_listing_name }; } catch { return { id: pid, name: undefined }; }

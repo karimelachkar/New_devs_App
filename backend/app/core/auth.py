@@ -104,10 +104,34 @@ async def authenticate_request(
     try:
         logger.debug(f"AUTH: Verifying token with Supabase - Token: {token[:20]}...")
 
-        # Verify token with Supabase
+        # Verify token - handle both Supabase tokens and custom JWT tokens
         try:
-            response = supabase.auth.get_user(token)
-            user = response.user
+            # First try to decode as custom JWT token (for challenge mode)
+            try:
+                payload = jwt.decode(
+                    token, 
+                    settings.secret_key, 
+                    algorithms=["HS256"],
+                    audience="authenticated"  # Accept tokens with aud: "authenticated"
+                )
+                logger.info(f"AUTH: Successfully decoded custom JWT token for {payload.get('email')}")
+                
+                # Create a mock user object from JWT payload
+                class MockUser:
+                    def __init__(self, payload):
+                        self.id = payload.get('id')
+                        self.email = payload.get('email')
+                        self.app_metadata = payload.get('app_metadata', {})
+                        self.user_metadata = payload.get('user_metadata', {})
+                        self.raw_app_metadata = payload.get('app_metadata', {})
+                        
+                user = MockUser(payload)
+                
+            except JWTError:
+                # If custom JWT fails, try Supabase auth
+                response = supabase.auth.get_user(token)
+                user = response.user
+                
         except Exception as e:
             # Malformed or invalid token (e.g., wrong number of segments)
             logger.warning(f"AUTH: Token verification failed (hash={token_hash}): {e.__class__.__name__}")
@@ -127,23 +151,33 @@ async def authenticate_request(
                 detail="Not authenticated",
             )
 
-        # Get user permissions
+        # Get user permissions - handle mock users for challenge mode
         logger.debug(f"AUTH: Fetching permissions for user {user.id}")
-        permissions_response = (
-            supabase.service.table("user_permissions").select("section, action").eq("user_id", user.id).execute()
-        )
-        permissions = [Permission(**perm) for perm in permissions_response.data]
+        try:
+            permissions_response = (
+                supabase.service.table("user_permissions").select("section, action").eq("user_id", user.id).execute()
+            )
+            permissions = [Permission(**perm) for perm in permissions_response.data]
+        except Exception as e:
+            # For mock users in challenge mode, use empty permissions
+            logger.info(f"AUTH: Using empty permissions for mock user {user.email}")
+            permissions = []
         logger.debug(f"AUTH: Found {len(permissions)} permissions for user {user.id}")
 
-        # Get user cities
+        # Get user cities - handle mock users for challenge mode  
         logger.debug(f"AUTH: Fetching cities for user {user.id}")
-        cities_response = supabase.service.table("users_city").select("city_name").eq("user_id", user.id).execute()
-        logger.info(f"AUTH: Raw cities response for user {user.id}: {cities_response.data}")
-        # Ensure cities are always lowercase for consistency
-        user_cities = [city["city_name"].lower() for city in cities_response.data if city.get("city_name")]
+        try:
+            cities_response = supabase.service.table("users_city").select("city_name").eq("user_id", user.id).execute()
+            logger.info(f"AUTH: Raw cities response for user {user.id}: {cities_response.data}")
+            # Ensure cities are always lowercase for consistency
+            user_cities = [city["city_name"].lower() for city in cities_response.data if city.get("city_name")]
+        except Exception as e:
+            # For mock users in challenge mode, use empty cities
+            logger.info(f"AUTH: Using empty cities for mock user {user.email}")
+            user_cities = []
         logger.info(f"AUTH: Found cities for user {user.id} ({user.email}): {user_cities}")
 
-        # Determine tenant role for admin fallback
+        # Determine tenant role for admin fallback - handle mock users for challenge mode
         tenant_role = None
         tenant_ids: List[str] = []
         try:
@@ -164,7 +198,8 @@ async def authenticate_request(
                         tenant_role = role_value
                         break
         except Exception as tenant_role_error:
-            logger.warning(f"AUTH: Failed to fetch tenant role for user {user.id}: {tenant_role_error}")
+            logger.info(f"AUTH: Using default tenant role for mock user {user.email}")
+            tenant_role = getattr(user, 'app_metadata', {}).get('role', 'user')
 
         # Check if user is admin
         # Check both app_metadata and raw_app_metadata for the role
@@ -205,7 +240,8 @@ async def authenticate_request(
                     if key not in allowed_city_map:
                         allowed_city_map[key] = city
             except Exception as allowed_error:
-                logger.warning(f"AUTH: Failed to resolve allowed cities for user {user.id}: {allowed_error}")
+                logger.info(f"AUTH: Using default allowed cities for mock user {user.email}")
+                allowed_city_map = {}
 
         # ✅ SIMPLIFIED: Let endpoint-specific logic handle admin vs user city differences
         # Auth only provides initial user city assignments for ALL users

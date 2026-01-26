@@ -22,19 +22,30 @@ class RedisClient:
         """Initialize Redis connection pool"""
         try:
             # Create connection pool for better performance
-            self.redis_pool = redis.ConnectionPool(
-                host=getattr(settings, 'redis_host', 'localhost'),
-                port=getattr(settings, 'redis_port', 6379),
-                db=getattr(settings, 'redis_db', 0),
-                password=getattr(settings, 'redis_password', None),
-                max_connections=50,  # Connection pooling
-                retry_on_timeout=True,
-                socket_keepalive=True,
-                socket_keepalive_options={},
-                health_check_interval=30,
-                socket_connect_timeout=5,  # Add connection timeout
-                retry_on_error=[redis.ConnectionError, redis.TimeoutError]
-            )
+            if getattr(settings, 'redis_url', None):
+                self.redis_pool = redis.ConnectionPool.from_url(
+                    settings.redis_url,
+                    max_connections=50,
+                    retry_on_timeout=True,
+                    socket_keepalive=True,
+                    health_check_interval=30,
+                    socket_connect_timeout=5,
+                    retry_on_error=[redis.ConnectionError, redis.TimeoutError]
+                )
+            else:
+                self.redis_pool = redis.ConnectionPool(
+                    host=getattr(settings, 'redis_host', 'localhost'),
+                    port=getattr(settings, 'redis_port', 6379),
+                    db=getattr(settings, 'redis_db', 0),
+                    password=getattr(settings, 'redis_password', None),
+                    max_connections=50,
+                    retry_on_timeout=True,
+                    socket_keepalive=True,
+                    socket_keepalive_options={},
+                    health_check_interval=30,
+                    socket_connect_timeout=5,
+                    retry_on_error=[redis.ConnectionError, redis.TimeoutError]
+                )
             
             self.redis_client = redis.Redis(connection_pool=self.redis_pool)
             

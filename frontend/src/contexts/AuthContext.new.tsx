@@ -1,10 +1,9 @@
-import React, { createContext, useContext, useEffect, useState, useCallback, useRef } from 'react';
+import React, { createContext, useContext, useEffect, useState, useCallback } from 'react';
 import { User, Session } from '@supabase/supabase-js';
 import { supabase } from '../lib/supabase';
+import { authOptimizer } from '../utils/authOptimizer';
 import { sessionRecovery } from '../utils/sessionRecovery';
 import { sessionPersistenceManager } from '../utils/SessionPersistenceManager';
-import { authOptimizer } from '../utils/authOptimizer';
-import { forceClearAllCache } from '../utils/forceCacheClear';
 import { extractTenantFromSession } from '../utils/jwtUtils';
 
 // Global logout flag to prevent session recovery during logout
@@ -45,33 +44,33 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   // Helper function to enrich user object with tenant_id from JWT claims and metadata  
   const enrichUserWithTenant = useCallback((session: Session): EnhancedUser => {
     const enhancedUser = session.user as EnhancedUser;
-    
+
     // Extract tenant_id with priority: JWT claims > app_metadata > user_metadata
     let tenant_id: string | null = null;
     let source = 'none';
-    
+
     // 1. First try JWT claims (added by custom_access_token_hook)
     const jwtTenantId = extractTenantFromSession(session);
     if (jwtTenantId) {
       tenant_id = jwtTenantId;
       source = 'jwt_claims';
     }
-    
+
     // 2. Fallback to app_metadata  
     if (!tenant_id && enhancedUser.app_metadata?.tenant_id) {
       tenant_id = enhancedUser.app_metadata.tenant_id;
       source = 'app_metadata';
     }
-    
+
     // 3. Fallback to user_metadata
     if (!tenant_id && enhancedUser.user_metadata?.tenant_id) {
       tenant_id = enhancedUser.user_metadata.tenant_id;
       source = 'user_metadata';
     }
-    
+
     // Add tenant_id as a direct property for backward compatibility
     enhancedUser.tenant_id = tenant_id;
-    
+
     if (import.meta.env.DEV) {
       console.log('🔒 TENANT_RESOLUTION: Enhanced user object', {
         userId: enhancedUser.id,
@@ -83,18 +82,18 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         user_metadata_tenant: enhancedUser.user_metadata?.tenant_id
       });
     }
-    
+
     return enhancedUser;
   }, []);
 
   // Fallback function for cases where we only have user object (like session recovery)
   const enrichUserFallback = useCallback((user: User): EnhancedUser => {
     const enhancedUser = user as EnhancedUser;
-    
+
     // Extract tenant_id from metadata only (no JWT claims available)
     let tenant_id: string | null = null;
     let source = 'none';
-    
+
     // Try app_metadata first
     if (enhancedUser.app_metadata?.tenant_id) {
       tenant_id = enhancedUser.app_metadata.tenant_id;
@@ -105,10 +104,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       tenant_id = enhancedUser.user_metadata.tenant_id;
       source = 'user_metadata';
     }
-    
+
     // Add tenant_id as a direct property for backward compatibility
     enhancedUser.tenant_id = tenant_id;
-    
+
     if (import.meta.env.DEV) {
       console.log('🔒 TENANT_RESOLUTION (fallback): User object without session', {
         userId: enhancedUser.id,
@@ -119,7 +118,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         user_metadata_tenant: enhancedUser.user_metadata?.tenant_id
       });
     }
-    
+
     return enhancedUser;
   }, []);
 
@@ -151,6 +150,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }, []);
 
   useEffect(() => {
+    console.log('🔍 [AuthContext] Provider MOUNTED via useEffect');
+    let mounted = true;
+
+    // Initialize state
     const initAuth = async () => {
       try {
         // Skip initialization if logout is in progress
@@ -202,17 +205,26 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     // Set up auth state change listener
     const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
-      console.log('[AuthContext] Auth state changed:', event, session?.user?.email);
-      if (session) {
-        const enrichedUser = enrichUserWithTenant(session);
-        setUser(enrichedUser);
-        setIsAuthenticated(true);
-        // Store session for recovery
-        authOptimizer.storeSession(session);
-      } else {
-        setUser(null);
-        setIsAuthenticated(false);
-        authOptimizer.clearSession();
+      console.log('🔍 [AuthContext] Auth state changed EVENT:', event);
+      console.log('🔍 [AuthContext] Session present:', !!session);
+
+      try {
+        if (session) {
+          console.log('🔍 [AuthContext] Session User Email:', session.user.email);
+          const enrichedUser = enrichUserWithTenant(session);
+          console.log('🔍 [AuthContext] Enriched User:', enrichedUser ? 'SUCCESS' : 'NULL');
+          setUser(enrichedUser);
+          setIsAuthenticated(true);
+          // Store session for recovery
+          authOptimizer.storeSession(session);
+        } else {
+          console.log('🔍 [AuthContext] Session is NULL -> Logging out');
+          setUser(null);
+          setIsAuthenticated(false);
+          authOptimizer.clearSession();
+        }
+      } catch (error) {
+        console.error('❌ [AuthContext] CRITICAL ERROR in auth state change handler:', error);
       }
       setIsLoading(false);
     });

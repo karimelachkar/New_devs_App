@@ -22,6 +22,10 @@ import RootRedirect from "./components/RootRedirect";
 import Header from "./components/Header";
 import "./index.css";
 import ProfilePage from "./components/profile/ProfilePage";
+import PropertiesList from "./components/PropertiesList";
+import ReservationsList from "./components/ReservationsList";
+import CleaningAssignments from "./components/CleaningAssignments";
+
 import { Toaster } from "react-hot-toast";
 import AppLoadingGate from "./components/AppLoadingGate";
 import { ToastProvider } from "./contexts/ToastContext";
@@ -43,11 +47,11 @@ interface SidebarContextType {
 
 const SidebarContext = createContext<SidebarContextType>({
   isCollapsed: false,
-  setIsCollapsed: () => {},
+  setIsCollapsed: () => { },
   isMobileOpen: false,
-  setIsMobileOpen: () => {},
+  setIsMobileOpen: () => { },
   submenuOpen: null,
-  setSubmenuOpen: () => {},
+  setSubmenuOpen: () => { },
 });
 
 export const useSidebar = () => {
@@ -55,11 +59,11 @@ export const useSidebar = () => {
   if (!context) {
     return {
       isCollapsed: false,
-      setIsCollapsed: () => {},
+      setIsCollapsed: () => { },
       isMobileOpen: false,
-      setIsMobileOpen: () => {},
+      setIsMobileOpen: () => { },
       submenuOpen: null,
-      setSubmenuOpen: () => {},
+      setSubmenuOpen: () => { },
     };
   }
   return context;
@@ -189,6 +193,9 @@ function AppContent() {
                       <Routes>
                         {/* Dashboard - Blank Canvas */}
                         <Route path="/dashboard" element={<Dashboard />} />
+                        <Route path="/properties" element={<PropertiesList />} />
+                        <Route path="/reservations" element={<ReservationsList />} />
+                        <Route path="/cleaning" element={<CleaningAssignments />} />
 
                         {/* Profile - Minimal */}
                         <Route path="/profile" element={<ProfilePage />} />

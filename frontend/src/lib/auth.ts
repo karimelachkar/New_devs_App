@@ -21,96 +21,96 @@ function isAdminEmail(email: string): boolean {
     return ADMIN_EMAILS.includes(email);
 }
 
+async function handleSuccessfulLogin(data: any): Promise<SignInResult> {
+    console.log('[auth.ts] Step 2: Login successful, user authenticated');
+    console.log('[auth.ts] Step 3: Now fetching bootstrap as FIRST API request...');
+
+    // CRITICAL: Immediately trigger bootstrap fetch as the FIRST request
+    const { fetchBootstrapDataRobust } = await import('../utils/robustBootstrapFetcher');
+
+    try {
+        console.log('[auth.ts] Calling fetchBootstrapDataRobust...');
+        // Session is already established by the login call
+
+        const bootstrapResult = await fetchBootstrapDataRobust();
+
+        // Use bootstrap data for user context
+        const bootstrapUser = bootstrapResult.data;
+        const isAdmin = bootstrapUser?.user?.is_admin ||
+            isAdminEmail(data.user.email || "") ||
+            data.user.app_metadata?.role === "admin";
+
+        const userCities = Array.isArray(bootstrapUser?.user?.cities)
+            ? bootstrapUser.user.cities.map((city: string) => city.toLowerCase())
+            : [];
+
+        const forcePasswordChange =
+            data.user.user_metadata?.force_password_change === true;
+
+        console.log('[auth.ts] ===== SIGN IN COMPLETED =====');
+
+        return {
+            user: {
+                ...data.user,
+                permissions: bootstrapUser?.permissions || [],
+                cities: userCities,
+                isAdmin,
+                tenant_id: bootstrapUser?.metadata?.tenant_id
+            },
+            error: null,
+            forcePasswordChange,
+        };
+    } catch (bootstrapError) {
+        console.error('[auth.ts] Bootstrap fetch failed, falling back to getAuthMe:', bootstrapError);
+
+        // Fallback to the original getAuthMe if bootstrap fails
+        const me = await SecureAPI.getAuthMe();
+
+        const isAdmin = me.is_admin ||
+            isAdminEmail(data.user.email || "") ||
+            data.user.app_metadata?.role === "admin";
+        const userCities = Array.isArray(me.cities)
+            ? me.cities.map(city => city.toLowerCase())
+            : [];
+
+        return {
+            user: {
+                ...data.user,
+                permissions: me.permissions || [],
+                cities: userCities,
+                isAdmin,
+            },
+            error: null,
+            forcePasswordChange: data.user.user_metadata?.force_password_change === true,
+        };
+    }
+}
+
 export async function signIn(
     email: string,
     password: string,
 ): Promise<SignInResult> {
     try {
         console.log('[auth.ts] ===== SIGN IN STARTED =====');
-        console.log('[auth.ts] Step 1: Calling Supabase signInWithPassword...');
-        
-        // Remove email domain validation - allow any email domain
-        const { data, error } = await supabase.auth.signInWithPassword({
-            email,
-            password,
+
+        const cleanEmail = email.trim();
+        const cleanPassword = password.trim();
+
+        console.log('[auth.ts] Checking credentials for:', cleanEmail);
+
+        console.log('[auth.ts] Step 1: Calling backend login...');
+
+        const { user, session, error } = await supabase.auth.signInWithPassword({
+            email: cleanEmail,
+            password: cleanPassword,
         });
 
         if (error) throw error;
 
-        console.log('[auth.ts] Step 2: Login successful, user authenticated');
-        console.log('[auth.ts] Step 3: Now fetching bootstrap as FIRST API request...');
-        
-        // CRITICAL: Immediately trigger bootstrap fetch as the FIRST request
-        // This ensures tenant info and permissions are loaded before anything else
-        
-        // Import and call bootstrap fetch directly
-        const { fetchBootstrapDataRobust } = await import('../utils/robustBootstrapFetcher');
-        
-        try {
-            console.log('[auth.ts] Calling fetchBootstrapDataRobust (this should be the ONLY request)...');
-            const bootstrapResult = await fetchBootstrapDataRobust();
-            console.log('[auth.ts] Bootstrap fetch completed:', {
-                source: bootstrapResult.source,
-                responseTime: bootstrapResult.responseTime,
-                user: bootstrapResult.data?.user?.email,
-                tenant: bootstrapResult.data?.metadata?.tenant_id,
-                permissions: bootstrapResult.data?.permissions?.length,
-                modules: bootstrapResult.data?.modules?.length
-            });
-            
-            // Use bootstrap data for user context instead of separate getAuthMe
-            const bootstrapUser = bootstrapResult.data;
-            const isAdmin = bootstrapUser?.user?.is_admin ||
-                isAdminEmail(data.user.email || "") ||
-                data.user.app_metadata?.role === "admin";
-            
-            // Get cities from bootstrap data
-            const userCities = Array.isArray(bootstrapUser?.user?.cities) 
-                ? bootstrapUser.user.cities.map((city: string) => city.toLowerCase()) 
-                : [];
-            
-            // Check if password change is required
-            const forcePasswordChange =
-                data.user.user_metadata?.force_password_change === true;
+        const data = { user, session };
 
-            console.log('[auth.ts] ===== SIGN IN COMPLETED =====');
-            console.log('[auth.ts] Bootstrap was fetched as the FIRST and ONLY request');
-            
-            return {
-                user: {
-                    ...data.user,
-                    permissions: bootstrapUser?.permissions || [],
-                    cities: userCities,
-                    isAdmin,
-                    tenant_id: bootstrapUser?.metadata?.tenant_id
-                },
-                error: null,
-                forcePasswordChange,
-            };
-        } catch (bootstrapError) {
-            console.error('[auth.ts] Bootstrap fetch failed, falling back to getAuthMe:', bootstrapError);
-            
-            // Fallback to the original getAuthMe if bootstrap fails
-            const me = await SecureAPI.getAuthMe();
-            
-            const isAdmin = me.is_admin ||
-                isAdminEmail(data.user.email || "") ||
-                data.user.app_metadata?.role === "admin";
-            const userCities = Array.isArray(me.cities) 
-                ? me.cities.map(city => city.toLowerCase()) 
-                : [];
+        return await handleSuccessfulLogin(data);
 
-            return {
-                user: {
-                    ...data.user,
-                    permissions: me.permissions || [],
-                    cities: userCities,
-                    isAdmin,
-                },
-                error: null,
-                forcePasswordChange: data.user.user_metadata?.force_password_change === true,
-            };
-        }
     } catch (error: any) {
         console.error("Sign in error:", error);
         return { user: null, error: error.message };
@@ -142,8 +142,8 @@ export async function getCurrentUser() {
             isAdminEmail(session.user.email || "") ||
             session.user.app_metadata?.role === "admin";
         // Ensure cities are always lowercase for consistency
-        const userCities = Array.isArray(me.cities) 
-            ? me.cities.map(city => city.toLowerCase()) 
+        const userCities = Array.isArray(me.cities)
+            ? me.cities.map(city => city.toLowerCase())
             : [];
 
         // For admin emails, ensure they have key management permissions
@@ -375,9 +375,9 @@ export async function getUserPermissionsDetails(userId: string) {
 
         // Get user's permissions with a direct query (allowed in dev allowlist)
         const { data: permissions, error: permissionsError } = await supabase
-          .from("user_permissions")
-          .select("section, action")
-          .eq("user_id", userId);
+            .from("user_permissions")
+            .select("section, action")
+            .eq("user_id", userId);
 
         if (permissionsError) {
             console.error("Error fetching permissions:", permissionsError);
@@ -390,9 +390,9 @@ export async function getUserPermissionsDetails(userId: string) {
 
         // Get user's city access (allowed in dev allowlist)
         const { data: cities, error: citiesError } = await supabase
-          .from("users_city")
-          .select("city_name")
-          .eq("user_id", userId);
+            .from("users_city")
+            .select("city_name")
+            .eq("user_id", userId);
 
         if (citiesError) {
             console.error("Error fetching cities:", citiesError);
@@ -403,7 +403,7 @@ export async function getUserPermissionsDetails(userId: string) {
 
         // Get the current user's session to check if they're viewing themselves
         const { data: { session } } = await supabase.auth.getSession();
-        
+
         let userEmail = "";
         let userName = "";
         let isAdmin = false;
@@ -467,17 +467,17 @@ export async function getUserPermissionsDetails(userId: string) {
                         Authorization: `Bearer ${session?.access_token}`,
                     },
                 });
-                
+
                 if (response.ok) {
                     backendUserData = await response.json();
                     userEmail = backendUserData.email || `User ${userId.slice(0, 8)}`;
                     userName = backendUserData.user_metadata?.name || backendUserData.name || userEmail.split("@")[0];
                     userCreatedAt = backendUserData.created_at || "";
                     // Check both app_metadata.role and the isAdmin field
-                    isAdmin = backendUserData.app_metadata?.role === "admin" || 
-                             backendUserData.isAdmin === true || 
-                             backendUserData.tenant_role === "admin" ||
-                             isAdminEmail(backendUserData.email || "");
+                    isAdmin = backendUserData.app_metadata?.role === "admin" ||
+                        backendUserData.isAdmin === true ||
+                        backendUserData.tenant_role === "admin" ||
+                        isAdminEmail(backendUserData.email || "");
                     userStatus = backendUserData.user_metadata?.status || backendUserData.status || "active";
                 } else {
                     // Fallback if we can't get user data
@@ -624,7 +624,7 @@ export async function updateUser(
         if (Object.keys(userMetadata).length > 0 || Object.keys(appMetadata).length > 0 || updateData.password) {
             const BACKEND_URL =
                 import.meta.env.VITE_BACKEND_URL || "http://localhost:8000";
-            
+
             const updatePayload: any = {};
             if (Object.keys(userMetadata).length > 0) {
                 updatePayload.user_metadata = userMetadata;
@@ -635,7 +635,7 @@ export async function updateUser(
             if (updateData.password) {
                 updatePayload.password = updateData.password;
             }
-            
+
             // Add phone to top-level if provided in userMetadata
             if (userMetadata.phone) {
                 updatePayload.phone = userMetadata.phone;
@@ -685,9 +685,9 @@ export async function updateUser(
         if (updateData.permissions) {
             // First delete existing permissions
             const { error: deleteError } = await supabase
-              .from("user_permissions")
-              .delete()
-              .eq("user_id", userId);
+                .from("user_permissions")
+                .delete()
+                .eq("user_id", userId);
 
             if (deleteError) throw deleteError;
 
@@ -710,16 +710,16 @@ export async function updateUser(
         // Update cities if provided (these are in allowed tables)
         if (isAdmin) {
             const { error: deleteCitiesError } = await supabase
-              .from("users_city")
-              .delete()
-              .eq("user_id", userId);
+                .from("users_city")
+                .delete()
+                .eq("user_id", userId);
 
             if (deleteCitiesError) throw deleteCitiesError;
         } else if (hasCitySelection) {
             const { error: deleteCitiesError } = await supabase
-              .from("users_city")
-              .delete()
-              .eq("user_id", userId);
+                .from("users_city")
+                .delete()
+                .eq("user_id", userId);
 
             if (deleteCitiesError) throw deleteCitiesError;
 

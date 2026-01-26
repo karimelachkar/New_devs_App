@@ -17,20 +17,20 @@ import { withRetry, handleApiError, classifyError } from '../utils/apiErrorHandl
 // Get backend URL with fallback for misconfigured production environments
 const getBackendUrl = () => {
   // For production/staging (non-localhost), use relative URLs to avoid CORS
-  if (typeof window !== 'undefined' && 
-      window.location.hostname !== 'localhost' && 
-      window.location.hostname !== '127.0.0.1') {
+  if (typeof window !== 'undefined' &&
+    window.location.hostname !== 'localhost' &&
+    window.location.hostname !== '127.0.0.1') {
     console.log(`[SecureAPI] Using relative URLs for ${window.location.hostname}`);
     return ''; // Empty string means relative URLs - the browser will use the same domain
   }
-  
+
   // For local development, check for configured URL
   const configuredUrl = import.meta.env.VITE_BACKEND_URL;
   if (configuredUrl && !configuredUrl.includes('localhost')) {
     // If it's not localhost but we're in development, it might be a remote backend
     return configuredUrl;
   }
-  
+
   // Default to localhost for development
   return configuredUrl || 'http://localhost:8000';
 };
@@ -51,7 +51,7 @@ export class SecureAPIClient {
   private securityViolations: string[] = [];
   private cachedToken: string | null = null;
   private cachedTenantId: string | null = null;
-  
+
   // Request deduplication
   private pendingRequests = new Map<string, Promise<any>>();
   private requestCache = new Map<string, { data: any; timestamp: number }>();
@@ -88,7 +88,7 @@ export class SecureAPIClient {
       supabase.from = (table: string) => {
         const stack = new Error().stack || '';
         const violation = `SECURITY VIOLATION: Direct Supabase query to table '${table}'`;
-        
+
         if (DEV_ALLOWLIST.has(table) || !ENFORCE) {
           // Allow in development with a clear warning when not enforcing strict mode
           console.warn(`⚠️ Legacy direct query allowed in DEV${ENFORCE ? ' (allowlist)' : ''}:`, table);
@@ -117,18 +117,18 @@ export class SecureAPIClient {
   private async getAuthHeaders(): Promise<HeadersInit> {
     // Try cached token first for performance
     let token = this.cachedToken;
-    
+
     // If no cached token, get a validated session
     if (!token) {
       console.log('[SecureAPI] No cached token, waiting for session or validating...');
       // First, wait briefly for a session to appear to avoid racing login
       const waited = await this.waitForSession(5000);
       const session = waited || await sessionManager.ensureValidSession();
-      
+
       if (!session || !session.access_token) {
         throw new TenantIsolationError('No valid authentication token available');
       }
-      
+
       token = session.access_token;
       // Update cached token for next request
       this.cachedToken = token;
@@ -153,7 +153,7 @@ export class SecureAPIClient {
       this.cachedTenantId = null;
       // Clear cache when switching tenants
       this.clearCache();
-      
+
       // Log tenant changes for security monitoring
       if (previousTenant && token) {
         console.log('[SecureAPI SECURITY] Tenant context changed - cache cleared', {
@@ -178,9 +178,18 @@ export class SecureAPIClient {
       // Extract tenant ID from JWT token if available
       const token = this.cachedToken;
       if (token) {
-        const payload = JSON.parse(atob(token.split('.')[1]));
-        const extractedTenantId = payload.user_metadata?.tenant_id || payload.tenant_id;
-        
+        let extractedTenantId = null;
+
+        // Handle mock token for challenge mode
+        if (token === "mock-token-123") {
+          extractedTenantId = "tenant-a";
+        }
+        // Check if it's a valid JWT
+        else if (token.includes('.') && token.split('.').length === 3) {
+          const payload = JSON.parse(atob(token.split('.')[1]));
+          extractedTenantId = payload.user_metadata?.tenant_id || payload.tenant_id;
+        }
+
         if (extractedTenantId) {
           // Validate tenant ID format (should be UUID)
           if (this.isValidTenantId(extractedTenantId)) {
@@ -219,7 +228,7 @@ export class SecureAPIClient {
         // Use user sub (unique ID) + email as session key for isolation
         const userSub = payload.sub;
         const userEmail = payload.email;
-        
+
         if (userSub && userEmail) {
           // Create short hash to avoid very long cache keys
           const sessionKey = `${userSub.substring(0, 8)}-${userEmail.split('@')[0]}`;
@@ -256,18 +265,18 @@ export class SecureAPIClient {
   public clearEndpointCache(endpointPattern: string): number {
     let cleared = 0;
     const keysToDelete: string[] = [];
-    
+
     for (const [key, value] of this.requestCache.entries()) {
       if (key.includes(endpointPattern)) {
         keysToDelete.push(key);
         cleared++;
       }
     }
-    
+
     keysToDelete.forEach(key => {
       this.requestCache.delete(key);
     });
-    
+
     // Also clear pending requests
     const pendingKeysToDelete: string[] = [];
     for (const [key, promise] of this.pendingRequests.entries()) {
@@ -275,15 +284,15 @@ export class SecureAPIClient {
         pendingKeysToDelete.push(key);
       }
     }
-    
+
     pendingKeysToDelete.forEach(key => {
       this.pendingRequests.delete(key);
     });
-    
+
     if (cleared > 0) {
       console.log(`[SecureAPI] Cleared ${cleared} cache entries for pattern: ${endpointPattern}`);
     }
-    
+
     return cleared;
   }
 
@@ -296,33 +305,33 @@ export class SecureAPIClient {
     cleaningCacheEntries: number;
     oldestCacheAge: number;
     newestCacheAge: number;
-    suspiciousEntries: Array<{key: string; age: number; data: any}>;
+    suspiciousEntries: Array<{ key: string; age: number; data: any }>;
   } {
     const now = Date.now();
     let cleaningEntries = 0;
     let oldestAge = 0;
     let newestAge = Infinity;
-    const suspiciousEntries: Array<{key: string; age: number; data: any}> = [];
-    
+    const suspiciousEntries: Array<{ key: string; age: number; data: any }> = [];
+
     for (const [key, value] of this.requestCache.entries()) {
       const age = now - value.timestamp;
-      
+
       if (age > oldestAge) oldestAge = age;
       if (age < newestAge) newestAge = age;
-      
+
       if (key.includes('secure/cleaning/reports')) {
         cleaningEntries++;
-        
+
         // Check for suspicious cleaning cache entries
         const items = value.data?.items || value.data?.data || [];
         const total = value.data?.total || 0;
-        
+
         if (total === 0 && key.includes('overdue')) {
-          suspiciousEntries.push({key, age, data: {total, itemsCount: items.length}});
+          suspiciousEntries.push({ key, age, data: { total, itemsCount: items.length } });
         }
       }
     }
-    
+
     return {
       totalCacheEntries: this.requestCache.size,
       totalPendingRequests: this.pendingRequests.size,
@@ -354,30 +363,30 @@ export class SecureAPIClient {
     // This ensures different users don't share cached/pending requests
     const userSessionKey = await this.getUserSessionKey();
     const sessionPart = userSessionKey ? `:${userSessionKey}` : '';
-    
+
     // For endpoints with query parameters, include them in the cache key
     // to prevent cache collisions (e.g., different cleaning tabs)
-    
+
     let cacheKey: string;
-    
+
     if (endpoint.includes('?')) {
       // Parse the endpoint to extract base path and query parameters
       const [basePath, queryString] = endpoint.split('?');
-      
+
       // Sort query parameters for consistent cache keys
       const params = new URLSearchParams(queryString);
       const sortedParams = Array.from(params.entries())
         .sort(([a], [b]) => a.localeCompare(b))
         .map(([key, value]) => `${key}=${encodeURIComponent(value)}`)
         .join('&');
-      
+
       // Include sorted parameters, tenant ID, and user session in cache key
       cacheKey = `${method}:${basePath}?${sortedParams}:${tenantId}${sessionPart}`;
     } else {
       // No query parameters, use original format with session isolation
       cacheKey = `${method}:${endpoint}:${tenantId}${sessionPart}`;
     }
-    
+
     // Debug logging for cache key generation
     if (endpoint.includes('secure/cleaning/reports') || endpoint.includes('properties')) {
       console.log('[SecureAPI] Generated cache key:', {
@@ -386,7 +395,7 @@ export class SecureAPIClient {
         hasQueryParams: endpoint.includes('?')
       });
     }
-    
+
     return cacheKey;
   }
 
@@ -399,23 +408,23 @@ export class SecureAPIClient {
     if (!endpoint.includes('/cleaning/reports')) {
       return true; // Cache all other endpoints normally
     }
-    
+
     // Check if result looks valid for cleaning data
     const items = data?.items || data?.data || [];
     const total = data?.total || 0;
-    
+
     // Always cache properly structured responses, even if empty
     // Empty results can be legitimate for users without tenant access or specific date ranges
     if (data && typeof data === 'object' && (data.hasOwnProperty('items') || data.hasOwnProperty('data') || data.hasOwnProperty('total'))) {
       return true; // Cache all properly structured responses
     }
-    
+
     // Only skip caching for malformed responses
     if (data === null || data === undefined) {
       console.warn('[SecureAPI] Not caching null/undefined cleaning result');
       return false;
     }
-    
+
     return true;
   }
 
@@ -428,35 +437,35 @@ export class SecureAPIClient {
     if (!endpoint.includes('/cleaning/reports')) {
       return cacheAge < this.CACHE_TTL;
     }
-    
+
     // ✅ FIX: Use longer cache duration for cleaning data to prevent race conditions
     // during rapid tab switching. The 3-second invalidation was causing cache thrashing.
     const CLEANING_CACHE_TTL = 30000; // 30 seconds instead of 3 seconds
-    
+
     // For cleaning endpoints, use extended cache time but validate content
     const items = cachedData?.items || cachedData?.data || [];
     const total = cachedData?.total || 0;
-    
+
     // Primary validation: check cache age with more reasonable timeout
     if (cacheAge > CLEANING_CACHE_TTL) {
       return false;
     }
-    
+
     // ✅ FIX: Remove overly aggressive empty result invalidation for overdue queries
     // Empty overdue results can be valid (no overdue cleanings), so don't invalidate them
     // unless they're really old or clearly corrupted
-    
+
     // Only invalidate if data structure is clearly malformed
     if (cachedData === null || cachedData === undefined) {
       return false;
     }
-    
+
     // Validate that we have expected data structure
     if (typeof cachedData !== 'object' || (!('items' in cachedData) && !('data' in cachedData))) {
       console.warn('[SecureAPI] Invalidating malformed cached cleaning result');
       return false;
     }
-    
+
     return true; // Cache is valid
   }
 
@@ -478,7 +487,7 @@ export class SecureAPIClient {
             if (token) return token;
           }
         }
-      } catch {}
+      } catch { }
       return null;
     };
 
@@ -540,24 +549,24 @@ export class SecureAPIClient {
   ): Promise<T> {
     const method = options.method || 'GET';
     const isGetRequest = method === 'GET';
-    
+
     // Log ALL API requests to track order
     const timestamp = new Date().toISOString();
     console.log(`[API REQUEST] ${timestamp} - ${method} ${endpoint}`);
-    
+
     // Create a tenant-isolated unique key for this request
     const tenantId = await this.getTenantId();
-    
+
     // If no valid tenant ID, bypass caching entirely for security
     if (!tenantId) {
       console.warn(`[API SECURITY] No valid tenant ID - bypassing cache for ${endpoint}`);
       return this.executeRequest<T>(endpoint, options, null, false);
     }
-    
+
     // Generate cache key that includes query parameters to prevent cache collisions
     // between different filters (e.g., different cleaning tabs)
     const requestKey = await this.generateCacheKey(method, endpoint, tenantId);
-    
+
     // For GET requests, check cache first (only with valid tenant)
     if (isGetRequest) {
       const cached = this.requestCache.get(requestKey);
@@ -572,7 +581,7 @@ export class SecureAPIClient {
           this.requestCache.delete(requestKey);
         }
       }
-      
+
       // Check if request is already pending
       const pending = this.pendingRequests.get(requestKey);
       if (pending) {
@@ -585,7 +594,7 @@ export class SecureAPIClient {
               setTimeout(() => reject(new Error('Pending request timeout')), 10000); // 10 second timeout
             })
           ]);
-          
+
           // ✅ FIX: Remove overly strict validation for overdue cleanings
           // Empty overdue results are valid and should be returned from deduplication
           console.log(`[API DEDUP SUCCESS] ${endpoint} - returned cached result`);
@@ -598,189 +607,189 @@ export class SecureAPIClient {
         }
       }
     }
-    
+
     // Create the request promise
     const requestPromise = this.executeRequest<T>(endpoint, options, requestKey, isGetRequest);
-    
+
     // Store pending request for deduplication (only with valid cache key)
     if (isGetRequest && requestKey) {
       this.pendingRequests.set(requestKey, requestPromise);
     }
-    
+
     return requestPromise;
   }
-  
+
   /**
    * Executes the actual request with retry logic
    */
-private async executeRequest<T>(
-  endpoint: string,
-  options: RequestInit,
-  requestKey: string | null,
-  isGetRequest: boolean
-): Promise<T> {
-  const MAX_RETRIES = 3; // Increased for better resilience
-  const RETRY_DELAY_BASE = 1000; // Reasonable delay for retries
-  let lastError: Error | null = null;
-  
-  for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
-    try {
-      const headers = await this.getAuthHeaders();
-      const url = `${this.backendUrl}${endpoint}`;
-      
-      
-      // Only show attempt number if this is a retry
-      if (attempt === 1) {
-        console.log(`🔒 Secure API Request: ${options.method || 'GET'} ${endpoint}`);
-      } else {
-        console.log(`🔒 Secure API Request: ${options.method || 'GET'} ${endpoint} (retry ${attempt-1}/${MAX_RETRIES-1})`);
-      }
-    
-      const response = await fetch(url, {
-        ...options,
-        headers: {
-          ...headers,
-          ...options.headers
-        }
-      });
+  private async executeRequest<T>(
+    endpoint: string,
+    options: RequestInit,
+    requestKey: string | null,
+    isGetRequest: boolean
+  ): Promise<T> {
+    const MAX_RETRIES = 3; // Increased for better resilience
+    const RETRY_DELAY_BASE = 1000; // Reasonable delay for retries
+    let lastError: Error | null = null;
 
-      if (!response.ok) {
-        let bodyText = '';
-        try { bodyText = await response.text(); } catch {}
-        let detail = '';
-        let errorData = null;
-        
-        try { 
-          errorData = JSON.parse(bodyText); 
-          detail = errorData?.detail || errorData?.message || '';
-          console.error('🔴 API Error Details:', {
-            status: response.status,
-            statusText: response.statusText,
-            errorData,
-            bodyText,
-            url: response.url
-          });
-        } catch (parseError) {
-          console.error('🔴 Could not parse error response:', bodyText);
+    for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+      try {
+        const headers = await this.getAuthHeaders();
+        const url = `${this.backendUrl}${endpoint}`;
+
+
+        // Only show attempt number if this is a retry
+        if (attempt === 1) {
+          console.log(`🔒 Secure API Request: ${options.method || 'GET'} ${endpoint}`);
+        } else {
+          console.log(`🔒 Secure API Request: ${options.method || 'GET'} ${endpoint} (retry ${attempt - 1}/${MAX_RETRIES - 1})`);
         }
-        
-        // Don't retry on 403 (forbidden) - it won't help
-        if (response.status === 403) {
-          throw new TenantIsolationError(
-            detail || 'Access denied: You can only access data from your organization'
-          );
-        }
-        
-        // If we get 401, try to refresh the session before retrying
-        if (response.status === 401) {
-          console.log('[SecureAPI] Got 401, attempting to refresh session...');
-          
-          // Import sessionValidator dynamically to avoid circular dependency
-          const { sessionValidator } = await import('../utils/sessionValidator');
-          
-          // Clear cached token
-          this.cachedToken = null;
-          
-          // Try to validate/refresh the session
-          const refreshedSession = await sessionValidator.validateSession();
-          
-          if (refreshedSession?.access_token) {
-            console.log('[SecureAPI] Session refreshed, will retry with new token');
-            this.cachedToken = refreshedSession.access_token;
-            
-            // Only retry if we haven't exceeded max attempts
-            if (attempt < MAX_RETRIES) {
-              throw new Error('Authentication refreshed, will retry with new token');
-            }
+
+        const response = await fetch(url, {
+          ...options,
+          headers: {
+            ...headers,
+            ...options.headers
           }
-          
-          // If we can't refresh or no more retries, fail with 401
-          throw new Error('Authentication failed - please login again');
-        }
-        
-        const msg = detail || bodyText || `${response.status} ${response.statusText}`;
-        throw new Error(`API request failed: ${msg}`);
-      }
+        });
 
-      // Handle response parsing based on content type and status
-      let data;
-      const contentType = response.headers.get('content-type');
-      
-      // Check if response has content to parse
-      if (response.status === 204 || response.status === 205) {
-        // No Content responses - return null or empty object
-        data = null;
-      } else if (contentType && contentType.includes('application/json')) {
-        // Only parse JSON if content-type indicates JSON
-        const text = await response.text();
-        if (text.trim()) {
-          data = JSON.parse(text);
-        } else {
-          data = null; // Empty response body
+        if (!response.ok) {
+          let bodyText = '';
+          try { bodyText = await response.text(); } catch { }
+          let detail = '';
+          let errorData = null;
+
+          try {
+            errorData = JSON.parse(bodyText);
+            detail = errorData?.detail || errorData?.message || '';
+            console.error('🔴 API Error Details:', {
+              status: response.status,
+              statusText: response.statusText,
+              errorData,
+              bodyText,
+              url: response.url
+            });
+          } catch (parseError) {
+            console.error('🔴 Could not parse error response:', bodyText);
+          }
+
+          // Don't retry on 403 (forbidden) - it won't help
+          if (response.status === 403) {
+            throw new TenantIsolationError(
+              detail || 'Access denied: You can only access data from your organization'
+            );
+          }
+
+          // If we get 401, try to refresh the session before retrying
+          if (response.status === 401) {
+            console.log('[SecureAPI] Got 401, attempting to refresh session...');
+
+            // Import sessionValidator dynamically to avoid circular dependency
+            const { sessionValidator } = await import('../utils/sessionValidator');
+
+            // Clear cached token
+            this.cachedToken = null;
+
+            // Try to validate/refresh the session
+            const refreshedSession = await sessionValidator.validateSession();
+
+            if (refreshedSession?.access_token) {
+              console.log('[SecureAPI] Session refreshed, will retry with new token');
+              this.cachedToken = refreshedSession.access_token;
+
+              // Only retry if we haven't exceeded max attempts
+              if (attempt < MAX_RETRIES) {
+                throw new Error('Authentication refreshed, will retry with new token');
+              }
+            }
+
+            // If we can't refresh or no more retries, fail with 401
+            throw new Error('Authentication failed - please login again');
+          }
+
+          const msg = detail || bodyText || `${response.status} ${response.statusText}`;
+          throw new Error(`API request failed: ${msg}`);
         }
-      } else {
-        // For non-JSON responses, return the text or null
-        const text = await response.text();
-        data = text || null;
-      }
-      
-      // Cache successful GET requests (with validation for cleaning endpoints)
-      if (isGetRequest && data !== null && requestKey) {
-        // Apply caching validation for cleaning endpoints to prevent race conditions
-        const shouldCache = this.shouldCacheCleaningResult(endpoint, data);
-        
-        if (shouldCache) {
-          this.requestCache.set(requestKey, {
-            data,
-            timestamp: Date.now()
-          });
-          console.log(`[API CACHE STORE] ${endpoint} (tenant: ${requestKey.split(':')[2]})`);
+
+        // Handle response parsing based on content type and status
+        let data;
+        const contentType = response.headers.get('content-type');
+
+        // Check if response has content to parse
+        if (response.status === 204 || response.status === 205) {
+          // No Content responses - return null or empty object
+          data = null;
+        } else if (contentType && contentType.includes('application/json')) {
+          // Only parse JSON if content-type indicates JSON
+          const text = await response.text();
+          if (text.trim()) {
+            data = JSON.parse(text);
+          } else {
+            data = null; // Empty response body
+          }
         } else {
-          console.log(`[API CACHE SKIP] ${endpoint} - result validation failed`);
+          // For non-JSON responses, return the text or null
+          const text = await response.text();
+          data = text || null;
         }
-      }
-      
-      // Success - clear any pending request tracking and return
-      if (isGetRequest && requestKey) {
-        this.pendingRequests.delete(requestKey);
-      }
-      
-      return data;
-    } catch (error) {
-      lastError = error as Error;
-      
-      // ✅ FIX: Clean up pending requests on error to prevent memory leaks
-      if (isGetRequest && requestKey) {
-        this.pendingRequests.delete(requestKey);
-      }
-      
-      // Don't retry on specific errors
-      if (error instanceof TenantIsolationError) {
-        throw error;
-      }
-      
-      console.error(`[SecureAPI] Attempt ${attempt}/${MAX_RETRIES} failed:`, error);
-      
-      // If this isn't the last attempt, retry with exponential backoff
-      if (attempt < MAX_RETRIES) {
-        const delay = RETRY_DELAY_BASE * Math.pow(2, attempt - 1) + Math.random() * 500;
-        console.log(`[SecureAPI] Retrying in ${Math.round(delay)}ms...`);
-        await new Promise(resolve => setTimeout(resolve, delay));
+
+        // Cache successful GET requests (with validation for cleaning endpoints)
+        if (isGetRequest && data !== null && requestKey) {
+          // Apply caching validation for cleaning endpoints to prevent race conditions
+          const shouldCache = this.shouldCacheCleaningResult(endpoint, data);
+
+          if (shouldCache) {
+            this.requestCache.set(requestKey, {
+              data,
+              timestamp: Date.now()
+            });
+            console.log(`[API CACHE STORE] ${endpoint} (tenant: ${requestKey.split(':')[2]})`);
+          } else {
+            console.log(`[API CACHE SKIP] ${endpoint} - result validation failed`);
+          }
+        }
+
+        // Success - clear any pending request tracking and return
+        if (isGetRequest && requestKey) {
+          this.pendingRequests.delete(requestKey);
+        }
+
+        return data;
+      } catch (error) {
+        lastError = error as Error;
+
+        // ✅ FIX: Clean up pending requests on error to prevent memory leaks
+        if (isGetRequest && requestKey) {
+          this.pendingRequests.delete(requestKey);
+        }
+
+        // Don't retry on specific errors
+        if (error instanceof TenantIsolationError) {
+          throw error;
+        }
+
+        console.error(`[SecureAPI] Attempt ${attempt}/${MAX_RETRIES} failed:`, error);
+
+        // If this isn't the last attempt, retry with exponential backoff
+        if (attempt < MAX_RETRIES) {
+          const delay = RETRY_DELAY_BASE * Math.pow(2, attempt - 1) + Math.random() * 500;
+          console.log(`[SecureAPI] Retrying in ${Math.round(delay)}ms...`);
+          await new Promise(resolve => setTimeout(resolve, delay));
+        }
       }
     }
+
+    // All retries failed - clean up and throw the last error
+    if (isGetRequest && requestKey) {
+      this.pendingRequests.delete(requestKey);
+      // Also clear any potentially corrupted cache entry
+      this.requestCache.delete(requestKey);
+      console.log(`[API CACHE CLEAR] ${endpoint} - cleared due to failed request`);
+    }
+
+    console.error('[SecureAPI] All retry attempts failed');
+    throw lastError || new Error('Request failed after all retries');
   }
-  
-  // All retries failed - clean up and throw the last error
-  if (isGetRequest && requestKey) {
-    this.pendingRequests.delete(requestKey);
-    // Also clear any potentially corrupted cache entry
-    this.requestCache.delete(requestKey);
-    console.log(`[API CACHE CLEAR] ${endpoint} - cleared due to failed request`);
-  }
-  
-  console.error('[SecureAPI] All retry attempts failed');
-  throw lastError || new Error('Request failed after all retries');
-}
 
   /**
    * Makes a public request to the backend without auth headers (for health checks, etc.)
@@ -1002,7 +1011,7 @@ private async executeRequest<T>(
   async createUser(payload: {
     email: string;
     password: string;
-    name: string; 
+    name: string;
     phone?: string;
     department?: string;
     group?: string;
@@ -1054,20 +1063,20 @@ private async executeRequest<T>(
     if (!params.has('page_size')) {
       params.append('page_size', '1000');
     }
-    
+
     // Use the standard properties endpoint that uses the properties table
     const endpoint = `/api/v1/properties?${params}`;
     console.log('[SecureAPI.getProperties] Requesting endpoint:', endpoint);
-    
+
     try {
       const result = await this.request<any>(endpoint);
       console.log('[SecureAPI.getProperties] Request successful');
       console.log('[SecureAPI.getProperties] Result type:', typeof result);
-      
+
       // The endpoint returns paginated results in format {items: [...], total: n}
       if (result && typeof result === 'object') {
         console.log('[SecureAPI.getProperties] Result keys:', Object.keys(result));
-        
+
         // Return the result in a consistent format that components expect
         // SimpleReservationForm expects {data: [...]}
         if ('items' in result) {
@@ -1084,7 +1093,7 @@ private async executeRequest<T>(
           return { data: [], total: 0 };
         }
       }
-      
+
       console.log('[SecureAPI.getProperties] Returning empty data for null/undefined result');
       return { data: [], total: 0 };
     } catch (error) {
@@ -1343,7 +1352,7 @@ private async executeRequest<T>(
   }
 
   // ============= INTERNAL KEYS =============
-  async getInternalKeys(filters?: { 
+  async getInternalKeys(filters?: {
     city?: string;
     page?: number;
     limit?: number;
@@ -1448,6 +1457,26 @@ private async executeRequest<T>(
       method: 'PUT',
       body: JSON.stringify(payload)
     });
+  }
+
+  // ============= DASHBOARD API =============
+  /**
+   * Get dashboard summary with optional simulation header
+   */
+  async getDashboardSummary(propertyId: string, options?: { simulatedTenant?: string, timestamp?: number }) {
+    const queryParams = new URLSearchParams({ property_id: propertyId });
+    if (options?.timestamp) {
+      queryParams.append('_t', options.timestamp.toString());
+    }
+
+    const requestOptions: RequestInit = {};
+    if (options?.simulatedTenant) {
+      requestOptions.headers = {
+        'X-Simulated-Tenant': options.simulatedTenant
+      };
+    }
+
+    return this.request<any>(`/api/v1/dashboard/summary?${queryParams}`, requestOptions);
   }
 
   async uploadCompanyLogo(logo_url: string) {
@@ -1575,8 +1604,8 @@ private async executeRequest<T>(
     const headers: any = await this.getAuthHeaders();
     delete headers['Content-Type'];
     const form = new FormData();
-  form.append('file', file);
-  form.append('size', file.size.toString());
+    form.append('file', file);
+    form.append('size', file.size.toString());
     const res = await fetch(`${this.backendUrl}/api/v1/process-documents/${documentId}/attachments`, {
       method: 'POST',
       headers,
@@ -1643,7 +1672,7 @@ private async executeRequest<T>(
     const queryParams = new URLSearchParams();
     if (params?.department_id) queryParams.append('department_id', params.department_id);
     if (params?.is_active !== undefined) queryParams.append('is_active', String(params.is_active));
-    
+
     const res = await this.request<any>(`/api/v1/permission_templates?${queryParams}`);
     return Array.isArray(res?.permission_templates) ? res.permission_templates : [];
   }
@@ -1893,13 +1922,14 @@ private async executeRequest<T>(
     const res = await this.request<any>(`/api/v1/logs/recent?limit=${limit}&user_only=true`);
     return Array.isArray(res?.data) ? res.data : [];
   }
-  
+
   /**
    * Get consolidated dashboard data
    */
   async getDashboardData(): Promise<any> {
     return this.request<any>('/api/v1/dashboard/data');
   }
+
 
   /**
    * Clear security violations log
@@ -1962,7 +1992,7 @@ private async executeRequest<T>(
       }
     }
   }
-  
+
   /**
    * Check if we have a valid auth token and it works
    * This actually verifies authentication, unlike checkConnection
@@ -1974,7 +2004,7 @@ private async executeRequest<T>(
         console.log('[SecureAPI] No cached token, auth not ready');
         return false;
       }
-      
+
       // Try to make an authenticated request to verify the token works
       try {
         await this.getAuthMe();
@@ -2075,27 +2105,27 @@ private async executeRequest<T>(
     if (filters.search) params.append('search', String(filters.search));
     if (filters.page) params.append('page', String(filters.page));
     if (filters.itemsPerPage) params.append('itemsPerPage', String(filters.itemsPerPage));
-    
+
     // Use the secure endpoint that validates user city access
     const endpoint = `/api/v1/secure/cleaning/reports?${params}`;
-    
+
     try {
       const result = await this.request<any>(endpoint, { signal });
-      
+
       // Additional validation for cleaning results
       if (result && typeof result === 'object') {
         const items = result.items || result.data || [];
         const total = result.total || 0;
-        
+
         // Log potential issues for monitoring
         if (total === 0 && filters.date_from === 'overdue') {
           console.warn('[SecureAPI] Received empty overdue cleaning data - this may indicate a backend issue');
         }
-        
+
         // Specific validation for tomorrow's data
-        const isTomorrowRequest = filters.date_from && filters.date_to && filters.date_from === filters.date_to && 
+        const isTomorrowRequest = filters.date_from && filters.date_to && filters.date_from === filters.date_to &&
           filters.date_from === new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString().split('T')[0];
-        
+
         if (isTomorrowRequest) {
           console.log('[SecureAPI] Tomorrow cleaning request completed', {
             endpoint: endpoint.substring(0, 80) + '...',
@@ -2105,7 +2135,7 @@ private async executeRequest<T>(
             city: filters.city,
             cacheKey: await this.generateCacheKey('GET', endpoint, await this.getTenantId() || 'unknown')
           });
-          
+
           if (total === 0) {
             console.warn('[SecureAPI] Tomorrow returned 0 cleanings - verify this is correct', {
               filters,
@@ -2113,10 +2143,10 @@ private async executeRequest<T>(
             });
           }
         }
-        
+
         console.log(`[SecureAPI] Cleaning request completed: ${endpoint.substring(0, 80)}... -> ${total} items`);
       }
-      
+
       return result;
     } catch (error) {
       console.error(`[SecureAPI] Cleaning request failed: ${endpoint.substring(0, 80)}...`, error);
@@ -2200,7 +2230,7 @@ private async executeRequest<T>(
   }
 
   // ============= CLEANERS API =============
-  
+
   /**
    * Get all cleaners
    */
@@ -2208,7 +2238,7 @@ private async executeRequest<T>(
     // Use secure endpoint with tenant isolation
     return this.request<any>('/api/v1/secure/cleaning/cleaners');
   }
-  
+
   /**
    * Create a new cleaner
    */
@@ -2219,7 +2249,7 @@ private async executeRequest<T>(
       body: JSON.stringify(data)
     });
   }
-  
+
   /**
    * Delete a cleaner
    */
@@ -2231,14 +2261,14 @@ private async executeRequest<T>(
   }
 
   // ============= CONTRACT RECORDS API =============
-  
+
   /**
    * Get contract records for a property
    */
   async getContractRecords(propertyId: string) {
     return this.request<any>(`/api/v1/properties/${propertyId}/contracts`);
   }
-  
+
   /**
    * Create a contract record
    */
@@ -2248,7 +2278,7 @@ private async executeRequest<T>(
       body: JSON.stringify(data)
     });
   }
-  
+
   /**
    * Update a contract record
    */
@@ -2258,7 +2288,7 @@ private async executeRequest<T>(
       body: JSON.stringify(data)
     });
   }
-  
+
   /**
    * Delete a contract record
    */
@@ -2267,9 +2297,9 @@ private async executeRequest<T>(
       method: 'DELETE'
     });
   }
-  
+
   // ============= RESERVATION SUBSECTIONS (SMART VIEWS) API =============
-  
+
   /**
    * Get all reservation subsections/smart views
    */
@@ -2277,14 +2307,14 @@ private async executeRequest<T>(
     const query = params ? `?${params.toString()}` : '';
     return this.request<any>(`/api/v1/smart-views${query}`);
   }
-  
+
   /**
    * Get a single reservation subsection/smart view
    */
   async getReservationSubsection(id: string) {
     return this.request<any>(`/api/v1/smart-views/${id}`);
   }
-  
+
   /**
    * Create a reservation subsection/smart view
    */
@@ -2294,7 +2324,7 @@ private async executeRequest<T>(
       body: JSON.stringify(data)
     });
   }
-  
+
   /**
    * Update a reservation subsection/smart view
    */
@@ -2304,7 +2334,7 @@ private async executeRequest<T>(
       body: JSON.stringify(data)
     });
   }
-  
+
   /**
    * Delete a reservation subsection/smart view
    */
@@ -2331,7 +2361,7 @@ private async executeRequest<T>(
    */
   async getVerifications(statusFilter: string = 'pending') {
     let endpoint = '/api/v1/guest-portal/verification-status';
-    
+
     if (statusFilter === 'pending') {
       endpoint += '/pending';
     } else if (statusFilter === 'all') {
@@ -2427,7 +2457,7 @@ export const secureProperties = {
   get: (id: string) => SecureAPI.getProperty(id),
   update: (id: string, data: any) => SecureAPI.updateProperty(id, data),
   create: (data: any) => SecureAPI.createProperty(data),
-  getAvailability: (id: string, start: string, end: string) => 
+  getAvailability: (id: string, start: string, end: string) =>
     SecureAPI.getPropertyAvailability(id, start, end)
 };
 
@@ -2448,7 +2478,7 @@ export const secureFormulas = {
 // Prevent direct exports of supabase to force secure API usage
 if (import.meta.env.DEV) {
   console.warn('🔒 SecureAPI initialized - Direct Supabase queries are now blocked');
-  
+
   // Make cache diagnostics available globally for debugging
   (window as any).secureApiDiagnostics = () => SecureAPI.getCacheDiagnostics();
   (window as any).clearCleaningCache = () => SecureAPI.clearEndpointCache('secure/cleaning/reports');

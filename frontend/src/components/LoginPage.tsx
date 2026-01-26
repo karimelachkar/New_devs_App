@@ -1,16 +1,14 @@
 import React, { useState, useEffect } from 'react';
 import { KeyRound, Mail, Lock, AlertCircle, Loader2 } from 'lucide-react';
-import { signIn } from '../lib/auth';
 import { useAuth } from '../contexts/AuthContext.new';
 import { useNavigate, useLocation } from 'react-router-dom';
-import { GlobalCacheManager } from '../lib/cacheUtils';
 
 export default function LoginPage() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const { user } = useAuth();
+  const { user, signIn } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
 
@@ -18,7 +16,7 @@ export default function LoginPage() {
     // If user is already logged in, redirect to home
     // DO NOT clear cache if user is authenticated - this would log them out!
     if (user) {
-      const from = (location.state as any)?.from || '/';
+      const from = (location.state as { from?: string })?.from || '/';
       navigate(from, { replace: true });
     }
   }, [user, navigate, location]);
@@ -29,20 +27,18 @@ export default function LoginPage() {
       setLoading(true);
       setError(null);
 
-      // Do NOT clear cache before login - Supabase handles session management
-      // Clearing cache here would break session persistence
+      const { error } = await signIn(email, password);
 
-      const { user, error } = await signIn(email, password);
+      if (error) {
+        throw error;
+      }
 
-      if (error) throw new Error(error);
-      if (!user) throw new Error('Authentication failed');
-
-      const from = (location.state as any)?.from || '/';
-      navigate(from, { replace: true });
-    } catch (error: any) {
+      // AuthContext will handle the navigation via onAuthStateChange
+      // No need to manually navigate here
+    } catch (error: unknown) {
       console.error('Login error:', error);
-      setError(error.message);
-      // Do NOT clear cache on error - preserve any existing session data
+      const errorMessage = error instanceof Error ? error.message : 'Authentication failed';
+      setError(errorMessage);
     } finally {
       setLoading(false);
     }
