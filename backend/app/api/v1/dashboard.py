@@ -15,11 +15,19 @@ async def get_dashboard_summary(
     
     revenue_data = await get_revenue_summary(property_id, tenant_id)
     
-    total_revenue_float = float(revenue_data['total'])
+    # FIX Bug 3: Use Decimal for precise financial calculations.
+    # Converting directly to float loses precision (e.g., 333.333 + 333.333 + 333.334
+    # may become 999.9999... or 1000.0001... in float arithmetic).
+    # Instead, use Decimal to round to exactly 2 decimal places first.
+    from decimal import Decimal, ROUND_HALF_UP
+    
+    total_decimal = Decimal(revenue_data['total'])
+    # Round to 2 decimal places for currency display using standard rounding
+    total_rounded = total_decimal.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
     
     return {
         "property_id": revenue_data['property_id'],
-        "total_revenue": total_revenue_float,
+        "total_revenue": float(total_rounded),  # Convert to float only after precise rounding
         "currency": revenue_data['currency'],
         "reservations_count": revenue_data['count']
     }
