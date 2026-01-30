@@ -8,25 +8,34 @@ from typing import Dict, Any, List
 # Or strictly query the DB if we assume the candidate sets it up.
 # For this file, we'll write the SQL query logic intended for the candidate.
 
-async def calculate_monthly_revenue(property_id: str, month: int, year: int, db_session=None) -> Decimal:
+async def calculate_monthly_revenue(property_id: str, month: int, year: int, db_session=None, property_timezone: str = 'UTC') -> Decimal:
     """
-    Calculates revenue for a specific month.
+    Calculates revenue for a specific month, respecting the property's timezone.
+    
+    FIX Bug 2: Use timezone-aware datetimes based on the property's local timezone.
+    Reservations are stored in UTC, but "March" should mean March in the property's
+    local time. A check-in on Mar 1st 00:30 Paris time is Feb 28th 23:30 UTC,
+    and should be counted as March revenue for a Paris property.
     """
+    from zoneinfo import ZoneInfo
     
-    # BUG 2: TIMEZONE GHOST
-    # Using naive datetimes for query construction.
-    # Reservations are stored in UTC (Postgres Timestamptz), but this
-    # creates naive local times (effectively treated as database-local time or UTC naive).
-    # For a property in UTC+2, a check-in on Mar 1st 00:30 local time is Feb 28th 22:30 UTC.
-    # This query will exclude it from March because it compares against strictly generated UTC timestamps.
+    # Create timezone-aware boundaries in the property's local timezone
+    tz = ZoneInfo(property_timezone)
     
-    start_date = datetime(year, month, 1)
+    # Start of month at midnight in property's local timezone
+    start_date_local = datetime(year, month, 1, 0, 0, 0, tzinfo=tz)
+    
+    # Start of next month at midnight in property's local timezone
     if month < 12:
-        end_date = datetime(year, month + 1, 1)
+        end_date_local = datetime(year, month + 1, 1, 0, 0, 0, tzinfo=tz)
     else:
-        end_date = datetime(year + 1, 1, 1)
+        end_date_local = datetime(year + 1, 1, 1, 0, 0, 0, tzinfo=tz)
+    
+    # Convert to UTC for database comparison - PostgreSQL will compare correctly
+    start_date = start_date_local.astimezone(ZoneInfo('UTC'))
+    end_date = end_date_local.astimezone(ZoneInfo('UTC'))
         
-    print(f"DEBUG: Querying revenue for {property_id} from {start_date} to {end_date}")
+    print(f"DEBUG: Querying revenue for {property_id} (tz: {property_timezone}) from {start_date} to {end_date}")
 
     # SQL Simulation (This would be executed against the actual DB)
     query = """
